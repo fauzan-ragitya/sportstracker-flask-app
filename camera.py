@@ -8,10 +8,15 @@ import situp
 from sklearn.preprocessing import LabelEncoder
 from sklearn.neighbors import KNeighborsClassifier
 import pandas as pd
-
+import json
+import requests
 
 class VideoCamera(object):
     def __init__(self, type=None):
+        self.reset()
+
+
+    def reset(self):
         # Using OpenCV to capture from device 0. If you have trouble capturing
         # from a webcam, comment the line below out and use a video file
         # instead.
@@ -24,6 +29,10 @@ class VideoCamera(object):
         self.seq_list = []
         self.state = False
         self.counter = 0
+        self.confidence = 0
+
+
+    def select_type(self, type):
         #Case untuk type
         if type == 'pushup':
             ##Insert model pushup
@@ -41,6 +50,7 @@ class VideoCamera(object):
             self.pose_embedding = pullup.FullBodyPoseEmbedder()
         else:
             self.model = None
+            self.reset()
 
     def __del__(self):
         self.video.release()
@@ -51,23 +61,40 @@ class VideoCamera(object):
         counter is added. Other than that the counter not
         added. the list that passed in this function
         is never empty'''
-
-        if seq[0] == 'down' and len(seq) == 1:
-            return seq.clear(), False
-        elif seq[0] == 'up' and len(seq) == 1:
-            return seq, False
-
-        if len(seq) == 2:
-            if seq[0] == seq[1]:
-                seq.pop(0)
-            return seq, False
-
-        if len(seq) == 3:
-            if seq[1] == seq[2]:
-                seq.pop(1)
+        if self.type == 'pushup':
+            if seq[0] == 'down' and len(seq) == 1:
+                return seq.clear(), False
+            elif seq[0] == 'up' and len(seq) == 1:
                 return seq, False
-            else:
-                return seq.clear(), True
+
+            if len(seq) == 2:
+                if seq[0] == seq[1]:
+                    seq.pop(0)
+                return seq, False
+
+            if len(seq) == 3:
+                if seq[1] == seq[2]:
+                    seq.pop(1)
+                    return seq, False
+                else:
+                    return seq.clear(), True
+        elif self.type == 'situp' or self.type == 'pullup':
+            if seq[0] == 'up' and len(seq) == 1:
+                return seq.clear(), False
+            elif seq[0] == 'down' and len(seq) == 1:
+                return self.seq_list, False
+
+            if len(seq) == 2:
+                if seq[0] == seq[1]:
+                    seq.pop(0)
+                return seq, False
+
+            if len(seq) == 3:
+                if seq[1] == seq[2]:
+                    seq.pop(1)
+                    return seq, False
+                else:
+                    return seq.clear(), True
 
     def open_pushup_model(self):
         # open model pushup
@@ -140,6 +167,7 @@ class VideoCamera(object):
                 # output_frame = cv2.cvtColor(output_frame, cv2.COLOR_BGR2RGB)
         elif self.type == 'pushup':
             # Draw pose prediction.
+            # print(self.get_info_dashboard())
             output_frame = input_frame.copy()
             if pose_landmarks is not None:
                 mp_drawing.draw_landmarks(
@@ -153,15 +181,18 @@ class VideoCamera(object):
                 dict_result, distances_result = my_knn()
                 if dict_result["up"] > dict_result["down"] and dict_result['conf_level'] > 50:
                     cv2.putText(output_frame, 'up ' + str(dict_result['conf_level']) + '%', (20, 20), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2, cv2.LINE_AA)
+                    self.confidence = dict_result['conf_level']
                     self.seq_list.append('up')
                     _, self.state = self.seq_check(self.seq_list)
                     if self.state:
                         self.counter += 1
                 elif dict_result["down"] > dict_result["up"] and dict_result['conf_level'] > 50:
                     cv2.putText(output_frame, 'down ' + str(dict_result['conf_level']) + '%', (20, 20), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2, cv2.LINE_AA)
+                    self.confidence = dict_result['conf_level']
                     self.seq_list.append('down')
                     _, self.state = self.seq_check(self.seq_list)
                 else:
+                    self.confidence = dict_result['conf_level']
                     cv2.putText(output_frame, 'not detected ' + str(dict_result['conf_level']) + '%', (20, 20), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2, cv2.LINE_AA)
                 cv2.putText(output_frame, 'Count: ' + str(self.counter), (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2, cv2.LINE_AA)
                 cv2.putText(output_frame, 'Push-up ', (20, 80), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2, cv2.LINE_AA)
@@ -194,7 +225,6 @@ class VideoCamera(object):
                     cv2.putText(output_frame, 'not detected ' + str(100*prediction[0][0]) + '%', (20, 20), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2, cv2.LINE_AA)
                 cv2.putText(output_frame, 'Count: ' + str(self.counter), (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2, cv2.LINE_AA)
                 cv2.putText(output_frame, 'Sit-up ', (20, 80), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2, cv2.LINE_AA)
-            pass
         elif self.type == 'pullup':
             output_frame = input_frame.copy()
             if pose_landmarks is not None:
@@ -227,8 +257,18 @@ class VideoCamera(object):
                     cv2.putText(output_frame, 'not detected ' + str(dict_result['conf_level']) + '%', (20, 20), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2, cv2.LINE_AA)
                 cv2.putText(output_frame, 'Count: ' + str(self.counter), (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2, cv2.LINE_AA)
                 cv2.putText(output_frame, 'Pull-up ', (20, 80), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2, cv2.LINE_AA)
-
+        resp = requests.post('http://157.230.45.210:7500/webcam/count/', data=self.get_info_dashboard())
+        result_json = resp.json()
+        print(result_json)
         ret, jpeg = cv2.imencode('.jpg', output_frame)
-        print(type(jpeg.tobytes()))
         return jpeg.tobytes()
+
+    def get_info_dashboard(self):
+        info = dict()
+        info["count"] = self.counter
+        info["conf"] = self.confidence
+
+        # f = open('result.txt', 'r')
+        data = json.dumps(info)
+        return data
 
